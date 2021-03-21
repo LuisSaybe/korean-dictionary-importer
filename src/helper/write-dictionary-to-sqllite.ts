@@ -1,8 +1,8 @@
 import fs from "fs";
+import readline from "readline";
 import * as jsdom from "jsdom";
 import sqlite3 from "sqlite3";
 import { open } from "sqlite";
-import csvParser from "csv-parser";
 
 import { removeWhiteSpaceFromXML } from "src/helper/xml";
 import {
@@ -12,7 +12,7 @@ import {
   insertExampleInfo,
 } from "src/helper/sqllite";
 
-export const writeToSQLLite = async (csvInput: string, filename: string) => {
+export const writeToSQLLite = async (inputFile: string, filename: string) => {
   const db = await open({
     filename,
     driver: sqlite3.Database,
@@ -23,35 +23,27 @@ export const writeToSQLLite = async (csvInput: string, filename: string) => {
   const dom = new jsdom.JSDOM();
   const domParser = new dom.window.DOMParser();
   const serializer = new dom.window.XMLSerializer();
-
+  const lines = readline.createInterface({
+    input: fs.createReadStream(inputFile),
+  });
   let index = 0;
-  const promises = [];
 
-  fs.createReadStream(csvInput)
-    .pipe(csvParser())
-    .on("data", (data) => {
-      const modifiedXML = removeWhiteSpaceFromXML(data.entry);
-      const xml = serializer.serializeToString(modifiedXML.documentElement);
-      const doc = domParser.parseFromString(xml, "application/xml");
+  for await (const line of lines) {
+    const modifiedXML = removeWhiteSpaceFromXML(line);
+    const xml = serializer.serializeToString(modifiedXML.documentElement);
+    const doc = domParser.parseFromString(xml, "application/xml");
 
-      promises.push(
-        Promise.all([
-          insertEntry(db, doc),
-          insertSenses(db, doc),
-          insertExampleInfo(db, doc),
-        ]),
-      );
+    await Promise.all([
+      insertEntry(db, doc),
+      insertSenses(db, doc),
+      insertExampleInfo(db, doc),
+    ]);
+    index++;
 
-      index++;
+    if (index % 100 === 0) {
+      console.log("Writing SQLLite entry", index);
+    }
+  }
 
-      if (index % 100 === 0) {
-        console.log("Writing SQLLite entry", index);
-      }
-    })
-    .on("end", () => {
-      Promise.all(promises).finally(() => {
-        console.log("Finished importing sqllite database");
-        db.close();
-      });
-    });
+  db.close();
 };

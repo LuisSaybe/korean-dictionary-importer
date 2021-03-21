@@ -1,6 +1,6 @@
 import yargs from "yargs";
 
-import { writeToCSV } from "src/helper/write-dictionary-to-rows";
+import { writeToLines } from "src/helper/write-dictionary-to-rows";
 import { writeToSQLLite } from "src/helper/write-dictionary-to-sqllite";
 
 yargs
@@ -25,7 +25,7 @@ yargs
     },
   )
   .command(
-    "csv",
+    "xml",
     "Import Korean entries as csv from XML file and API",
     (yargs) => {
       yargs
@@ -46,7 +46,7 @@ yargs
     },
     (argv) => {
       const uncheckedArgv = argv as any;
-      writeToCSV(
+      writeToLines(
         uncheckedArgv.input,
         uncheckedArgv.output,
         uncheckedArgv.api_key,

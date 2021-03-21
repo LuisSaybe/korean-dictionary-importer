@@ -1,60 +1,107 @@
 import AdmZip from "adm-zip";
-import fs from "fs";
+import { open, close, appendFile } from "fs";
 import * as jsdom from "jsdom";
-const csvWriter = require("csv-writer");
 
 import { getDefinition } from "src/helper/dictionary-api";
 import { removeWhiteSpaceFromXML } from "src/helper/xml";
 
-export const writeToCSV = async (
+async function writeLines(
+  fileDescriptor: number,
   inputXMLZipfile: string,
-  outputFile: string,
   apiKey: string,
-) => {
+) {
   const zip = new AdmZip(inputXMLZipfile);
   const zipEntries = zip.getEntries();
-  const options = {
-    path: outputFile,
-    header: [{ id: "entry", title: "entry" }],
-  };
-  fs.writeFileSync(outputFile, "entry\n");
-  const writer = csvWriter.createObjectCsvWriter({ ...options, append: true });
-  const dom = new jsdom.JSDOM();
-  const domParser = new dom.window.DOMParser();
-  const serializer = new dom.window.XMLSerializer();
+  const newLinesRegex = new RegExp("\n", "g");
+  const visited = new Set();
+  let first = true;
 
   for (
     let zipEntriesIndex = 0;
     zipEntriesIndex < zipEntries.length;
     zipEntriesIndex++
   ) {
-    const doc = domParser.parseFromString(
-      zipEntries[zipEntriesIndex].getData().toString("utf8"),
-      "application/xml",
+    const idRegex = new RegExp(
+      '<LexicalEntry\\s+att="id"\\s+val="(\\d+)">',
+      "g",
     );
-    const result = doc.evaluate(
-      "//feat[@att='lexicalUnit'][@val='단어']/parent::LexicalEntry/@val",
-      doc,
-      null,
-      dom.window.XPathResult.ORDERED_NODE_ITERATOR_TYPE,
-      null,
-    );
-    let attribute = result.iterateNext();
+    const dom = new jsdom.JSDOM();
+    const serializer = new dom.window.XMLSerializer();
+    const data = zipEntries[zipEntriesIndex].getData().toString("utf8");
+    let match;
 
-    while (attribute) {
-      const xmlString = await getDefinition(attribute.value, apiKey);
-      const documentWithoutWhitespace = removeWhiteSpaceFromXML(
-        xmlString.trim(),
-      );
-      const xml = serializer.serializeToString(documentWithoutWhitespace);
+    while ((match = idRegex.exec(data))) {
+      const id = match[1];
 
-      writer.writeRecords([{ entry: xml }]);
-      console.log(
-        `Processing zip file ${zipEntriesIndex} / ${zipEntries.length}, wrote entry with ID ${attribute.value}`,
+      if (visited.has(id)) {
+        continue;
+      }
+
+      visited.add(id);
+
+      let xmlString;
+      let content;
+
+      try {
+        xmlString = await getDefinition(id, apiKey);
+        console.log(
+          `Fetched ${id} from zipentry ${zipEntriesIndex} / ${zipEntries.length}`,
+        );
+      } catch (e) {
+        console.error(e);
+      }
+
+      if (xmlString) {
+        const documentWithoutWhitespace = removeWhiteSpaceFromXML(
+          xmlString.trim(),
+        );
+        content = serializer
+          .serializeToString(documentWithoutWhitespace)
+          .replaceAll(newLinesRegex, "");
+      } else {
+        content = id;
+      }
+
+      const toWrite = first ? content : "\n" + content;
+
+      await new Promise<void>((resolve, reject) =>
+        appendFile(fileDescriptor, toWrite, "utf8", (e) => {
+          if (e) {
+            reject(e);
+          } else {
+            resolve();
+          }
+        }),
       );
-      attribute = result.iterateNext();
+
+      first = false;
     }
   }
+}
 
-  console.log("Completed processing API Data");
-};
+export async function writeToLines(
+  inputXMLZipfile: string,
+  outputFile: string,
+  apiKey: string,
+) {
+  return new Promise<void>((resolve, reject) => {
+    open(outputFile, "a", async (e, fd) => {
+      if (e) {
+        reject(e);
+        return;
+      }
+
+      await writeLines(fd, inputXMLZipfile, apiKey);
+
+      close(fd, (e) => {
+        if (e) {
+          reject(e);
+        } else {
+          resolve();
+        }
+      });
+    });
+  });
+}
+
+// 68877
