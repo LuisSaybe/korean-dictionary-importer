@@ -38,11 +38,12 @@ export const writeToSQLLite = async (inputFile: string, filename: string) => {
       insertSenses(db, doc),
       insertExampleInfo(db, doc),
     ]);
-    index++;
 
     if (index % 100 === 0) {
       console.log("Writing SQLLite entry", index);
     }
+
+    index++;
   }
 
   db.close();
